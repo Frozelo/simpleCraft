@@ -6,31 +6,91 @@ import (
 	rl "github.com/gen2brain/raylib-go/raylib"
 )
 
-func TestToggleSquare(t *testing.T) {
+func TestAddShape(t *testing.T) {
 	g := &Game{}
-	position := rl.Vector2{X: 12, Y: 34}
+	squarePos := rl.Vector2{X: 12, Y: 34}
+	circlePos := rl.Vector2{X: 56, Y: 78}
 
-	g.toggleSquare(position, 1)
-	if len(g.squares) != 1 || g.squares[0].Pos != position {
-		t.Fatalf("squares = %#v, want [%#v]", g.squares, position)
-	}
+	g.addShape(ShapeSquare, squarePos)
+	g.addShape(ShapeCircle, circlePos)
 
-	g.toggleSquare(position, 1+squareToggleCooldown)
-	if len(g.squares) != 0 {
-		t.Fatalf("squares = %#v, want empty", g.squares)
+	if len(g.shapes) != 2 || g.shapes[0].Type != ShapeSquare || g.shapes[0].Pos != squarePos || g.shapes[0].Color != squareColor ||
+		g.shapes[1].Type != ShapeCircle || g.shapes[1].Pos != circlePos || g.shapes[1].Color != circleColor {
+		t.Fatalf("shapes = %#v, want a square and a circle at their requested positions", g.shapes)
 	}
 }
 
-func TestSelectSquares(t *testing.T) {
-	g := &Game{squares: []Square{
-		{Pos: rl.Vector2{X: 25, Y: 10}},
-		{Pos: rl.Vector2{X: 50, Y: 50}, Selected: true},
+func TestClickSelectsTopmostShapeAndEmptyClickClearsSelection(t *testing.T) {
+	position := rl.Vector2{X: 25, Y: 25}
+	g := &Game{shapes: []Shape{
+		{Type: ShapeSquare, Pos: position},
+		{Type: ShapeCircle, Pos: position},
 	}}
 
-	g.selectSquares(rl.Rectangle{X: 0, Y: 0, Width: 20, Height: 20})
+	releaseSelection(g, position, position, 1)
+	if g.shapes[0].Selected || !g.shapes[1].Selected || !g.hasLastClick || g.selecting {
+		t.Fatalf("after click: game = %#v, want only topmost shape selected", g)
+	}
 
-	if !g.squares[0].Selected || g.squares[1].Selected {
-		t.Fatalf("selected = %#v, want [true false]", g.squares)
+	empty := rl.Vector2{X: 100, Y: 100}
+	releaseSelection(g, empty, empty, 2)
+	if g.shapes[0].Selected || g.shapes[1].Selected || g.hasLastClick {
+		t.Fatalf("after empty click: game = %#v, want no selection or pending click", g)
+	}
+}
+
+func TestDoubleClickSelectsAllShapesOfSameType(t *testing.T) {
+	position := rl.Vector2{X: 20, Y: 20}
+	g := &Game{shapes: []Shape{
+		{Type: ShapeSquare, Pos: position},
+		{Type: ShapeSquare, Pos: rl.Vector2{X: 60, Y: 60}},
+		{Type: ShapeCircle, Pos: rl.Vector2{X: 100, Y: 100}},
+	}}
+
+	releaseSelection(g, position, position, 1)
+	releaseSelection(g, position, position, 1+doubleClickInterval/2)
+	if !g.shapes[0].Selected || !g.shapes[1].Selected || g.shapes[2].Selected || g.hasLastClick {
+		t.Fatalf("after double click: game = %#v, want both squares selected", g)
+	}
+
+	releaseSelection(g, position, position, 2)
+	if !g.hasLastClick || g.shapes[1].Selected {
+		t.Fatalf("after next click: game = %#v, want a new single-click sequence", g)
+	}
+}
+
+func TestDragSelectsIntersectingShapesAndResetsClick(t *testing.T) {
+	g := &Game{shapes: []Shape{
+		{Type: ShapeSquare, Pos: rl.Vector2{X: 20, Y: 20}},
+		{Type: ShapeCircle, Pos: rl.Vector2{X: 45, Y: 45}},
+		{Type: ShapeSquare, Pos: rl.Vector2{X: 100, Y: 100}, Selected: true},
+	}, hasLastClick: true}
+
+	releaseSelection(g, rl.Vector2{X: 50, Y: 50}, rl.Vector2{X: 10, Y: 10}, 1)
+	if !g.shapes[0].Selected || !g.shapes[1].Selected || g.shapes[2].Selected || g.hasLastClick || g.selecting {
+		t.Fatalf("after drag: game = %#v, want intersecting shapes selected", g)
+	}
+}
+
+func TestMovementAtThresholdRemainsClick(t *testing.T) {
+	g := &Game{shapes: []Shape{{Type: ShapeSquare, Pos: rl.Vector2{X: 10, Y: 10}}}}
+	releaseSelection(g, rl.Vector2{X: 10, Y: 10}, rl.Vector2{X: 15, Y: 10}, 1)
+	if !g.shapes[0].Selected || !g.hasLastClick {
+		t.Fatalf("game = %#v, want a click at the drag threshold", g)
+	}
+}
+
+func TestDeleteSelectedShapes(t *testing.T) {
+	kept := Shape{Type: ShapeCircle, Pos: rl.Vector2{X: 30, Y: 30}}
+	g := &Game{shapes: []Shape{
+		{Type: ShapeSquare, Selected: true},
+		kept,
+		{Type: ShapeCircle, Selected: true},
+	}, hasLastClick: true}
+
+	g.deleteSelectedShapes()
+	if len(g.shapes) != 1 || g.shapes[0] != kept || g.hasLastClick {
+		t.Fatalf("game = %#v, want only the unselected shape", g)
 	}
 }
 
@@ -43,20 +103,8 @@ func TestSelectionRectForClickUsesCursorPoint(t *testing.T) {
 	}
 }
 
-func TestTryToggleSquareRespectsCooldown(t *testing.T) {
-	g := &Game{}
-	position := rl.Vector2{X: 12, Y: 34}
-
-	if !g.toggleSquare(position, 1) {
-		t.Fatal("first toggle was ignored")
-	}
-	if g.toggleSquare(position, 1+squareToggleCooldown/2) {
-		t.Fatal("toggle during cooldown succeeded")
-	}
-	if !g.toggleSquare(position, 1+squareToggleCooldown) {
-		t.Fatal("toggle after cooldown was ignored")
-	}
-	if len(g.squares) != 0 {
-		t.Fatalf("squares = %#v, want empty", g.squares)
-	}
+func releaseSelection(g *Game, start, end rl.Vector2, now float64) {
+	g.selectionStart = start
+	g.selecting = true
+	g.finishSelection(end, now)
 }

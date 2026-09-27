@@ -41,9 +41,6 @@ type Shape struct {
 type Game struct {
 	shapes []Shape
 
-	squaresCount int
-	circlesCount int
-
 	selectionStart rl.Vector2
 	selecting      bool
 
@@ -90,52 +87,52 @@ func (g *Game) update() {
 		g.selectionStart = rl.GetMousePosition()
 	}
 
-	// On release, distinguish a drag selection from a click on a shape.
 	if rl.IsMouseButtonReleased(rl.MouseButtonLeft) && g.selecting {
-		end := rl.GetMousePosition()
-		dx := end.X - g.selectionStart.X
-		dy := end.Y - g.selectionStart.Y
-		// Treat the input as a drag when the cursor moved farther than the threshold
-		// between the press and release positions. Compare squared distances to avoid
-		// computing a square root: dx² + dy² > threshold².
-		isDrag := dx*dx+dy*dy > selectionDragThreshold*selectionDragThreshold
-
-		if isDrag {
-			// Dragging selects every shape inside the selection rectangle.
-			g.selectShapes(selectionRect(g.selectionStart, end))
-			g.hasLastClick = false
-		} else if index := g.shapeAt(end); index >= 0 {
-			shape := g.shapes[index]
-			now := rl.GetTime()
-			isDoubleClick := g.hasLastClick &&
-				shape.Pos == g.lastClickPosition &&
-				shape.Type == g.lastClickShapeType &&
-				now-g.lastClickAt <= doubleClickInterval
-
-			if isDoubleClick {
-				// A second click selects every shape of the same type.
-				g.selectAllShapesOfType(shape.Type)
-				g.hasLastClick = false
-			} else {
-				// A single click selects only this shape and starts the double-click timer.
-				g.selectShape(index)
-				g.lastClickAt = now
-				g.lastClickPosition = shape.Pos
-				g.lastClickShapeType = shape.Type
-				g.hasLastClick = true
-			}
-		} else {
-			// Clicking empty space clears the current selection.
-			g.clearSelection()
-			g.hasLastClick = false
-		}
-
-		g.selecting = false
+		g.finishSelection(rl.GetMousePosition(), rl.GetTime())
 	}
 
 	if rl.IsKeyPressed(rl.KeyBackspace) {
 		g.deleteSelectedShapes()
 	}
+}
+
+func (g *Game) finishSelection(end rl.Vector2, now float64) {
+	dx := end.X - g.selectionStart.X
+	dy := end.Y - g.selectionStart.Y
+	// Compare squared distances so the threshold does not require a square root.
+	if dx*dx+dy*dy > selectionDragThreshold*selectionDragThreshold {
+		g.selectShapes(selectionRect(g.selectionStart, end))
+		g.hasLastClick = false
+	} else {
+		g.selectClickedShape(end, now)
+	}
+	g.selecting = false
+}
+
+func (g *Game) selectClickedShape(position rl.Vector2, now float64) {
+	index := g.shapeAt(position)
+	if index < 0 {
+		g.clearSelection()
+		g.hasLastClick = false
+		return
+	}
+
+	shape := g.shapes[index]
+	isDoubleClick := g.hasLastClick &&
+		shape.Pos == g.lastClickPosition &&
+		shape.Type == g.lastClickShapeType &&
+		now-g.lastClickAt <= doubleClickInterval
+	if isDoubleClick {
+		g.selectAllShapesOfType(shape.Type)
+		g.hasLastClick = false
+		return
+	}
+
+	g.selectShape(index)
+	g.lastClickAt = now
+	g.lastClickPosition = shape.Pos
+	g.lastClickShapeType = shape.Type
+	g.hasLastClick = true
 }
 
 func (g *Game) draw() {
@@ -147,7 +144,16 @@ func (g *Game) draw() {
 
 	selected := 0
 	preSelected := 0
+	squares := 0
+	circles := 0
 	for _, shape := range g.shapes {
+		switch shape.Type {
+		case ShapeSquare:
+			squares++
+		case ShapeCircle:
+			circles++
+		}
+
 		color := shape.Color
 		if shape.Selected {
 			color = rl.Gold
@@ -159,15 +165,14 @@ func (g *Game) draw() {
 		}
 
 		drawShape(shape, color)
-
 	}
 
 	if g.selecting {
 		rl.DrawRectangleLinesEx(selection, 1, rl.SkyBlue)
 	}
 
-	rl.DrawText("Squares: "+strconv.Itoa(g.squaresCount), 10, 50, 20, rl.Red)
-	rl.DrawText("Circles: "+strconv.Itoa(g.circlesCount), 10, 70, 20, rl.Blue)
+	rl.DrawText("Squares: "+strconv.Itoa(squares), 10, 50, 20, rl.Red)
+	rl.DrawText("Circles: "+strconv.Itoa(circles), 10, 70, 20, rl.Blue)
 	rl.DrawText("Selected: "+strconv.Itoa(selected), 10, 10, 20, rl.Green)
 	rl.DrawText("PreSelected: "+strconv.Itoa(preSelected), 10, 30, 20, rl.Gray)
 }
@@ -175,10 +180,7 @@ func (g *Game) draw() {
 func (g *Game) addShape(shapeType ShapeType, position rl.Vector2) {
 	color := squareColor
 	if shapeType == ShapeCircle {
-		g.circlesCount++
 		color = circleColor
-	} else {
-		g.squaresCount++
 	}
 
 	g.shapes = append(g.shapes, Shape{Type: shapeType, Pos: position, Color: color})
@@ -186,18 +188,7 @@ func (g *Game) addShape(shapeType ShapeType, position rl.Vector2) {
 }
 
 func (g *Game) deleteSelectedShapes() {
-	for i := len(g.shapes) - 1; i >= 0; i-- {
-		if g.shapes[i].Selected {
-			switch g.shapes[i].Type {
-			case ShapeSquare:
-				g.squaresCount--
-			case ShapeCircle:
-				g.circlesCount--
-			}
-
-			g.shapes = slices.Delete(g.shapes, i, i+1)
-		}
-	}
+	g.shapes = slices.DeleteFunc(g.shapes, func(shape Shape) bool { return shape.Selected })
 	g.hasLastClick = false
 }
 

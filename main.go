@@ -35,8 +35,10 @@ func main() {
 }
 
 func (g *Game) run() {
+	rl.SetConfigFlags(rl.FlagWindowResizable)
 	rl.InitWindow(windowWidth, windowHeight, windowTitle)
 	defer rl.CloseWindow()
+
 	rl.SetTargetFPS(targetFPS)
 
 	for !rl.WindowShouldClose() {

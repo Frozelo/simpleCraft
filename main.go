@@ -9,12 +9,14 @@ import (
 )
 
 const (
-	windowWidth          = 1280
-	windowHeight         = 720
-	windowTitle          = "SimpleCraft Sim"
-	targetFPS            = 60
-	squareSize           = 20
-	squareToggleCooldown = 0.05
+	windowWidth            = 1280
+	windowHeight           = 720
+	windowTitle            = "SimpleCraft Sim"
+	targetFPS              = 60
+	squareSize             = 20
+	squareToggleCooldown   = 0.05
+	doubleClickInterval    = 0.35
+	selectionDragThreshold = 5.0
 )
 
 type Square struct {
@@ -27,6 +29,10 @@ type Game struct {
 	nextToggleAt   float64
 	selectionStart rl.Vector2
 	selecting      bool
+
+	lastClickAt     float64
+	lastClickSquare rl.Vector2
+	hasLastClick    bool
 }
 
 func main() {
@@ -52,18 +58,60 @@ func (g *Game) run() {
 }
 
 func (g *Game) update() {
+	// Keep the keyboard shortcut for creating or removing squares.
 	if rl.IsKeyDown(rl.KeyA) {
 		g.toggleSquare(rl.GetMousePosition(), rl.GetTime())
 	}
 
+	// Start tracking a selection when the left mouse button is pressed.
 	if rl.IsMouseButtonPressed(rl.MouseButtonLeft) {
 		g.selecting = true
 		g.selectionStart = rl.GetMousePosition()
 	}
 
+	// On release, distinguish a drag selection from a click on a square.
 	if rl.IsMouseButtonReleased(rl.MouseButtonLeft) && g.selecting {
-		g.selectSquares(selectionRect(g.selectionStart, rl.GetMousePosition()))
+		end := rl.GetMousePosition()
+		dx := end.X - g.selectionStart.X
+		dy := end.Y - g.selectionStart.Y
+		// Treat the input as a drag when the cursor moved farther than the threshold
+		// between the press and release positions. Compare squared distances to avoid
+		// computing a square root: dx² + dy² > threshold².
+		isDrag := dx*dx+dy*dy > selectionDragThreshold*selectionDragThreshold
+
+		if isDrag {
+			// Dragging selects every square inside the selection rectangle.
+			g.selectSquares(selectionRect(g.selectionStart, end))
+			g.hasLastClick = false
+		} else if index := g.squareAt(end); index >= 0 {
+			squarePos := g.squares[index].Pos
+			now := rl.GetTime()
+			isDoubleClick := g.hasLastClick &&
+				squarePos == g.lastClickSquare &&
+				now-g.lastClickAt <= doubleClickInterval
+
+			if isDoubleClick {
+				// A second click on the same square selects all squares.
+				g.selectAllSquares()
+				g.hasLastClick = false
+			} else {
+				// A single click selects only this square and starts the double-click timer.
+				g.selectSquare(index)
+				g.lastClickAt = now
+				g.lastClickSquare = squarePos
+				g.hasLastClick = true
+			}
+		} else {
+			// Clicking empty space clears the current selection.
+			g.clearSelection()
+			g.hasLastClick = false
+		}
+
 		g.selecting = false
+	}
+
+	if rl.IsKeyPressed(rl.KeyBackspace) {
+		g.deleteSelectedSquares()
 	}
 }
 
@@ -118,9 +166,47 @@ func (g *Game) toggleSquare(position rl.Vector2, now float64) bool {
 	return true
 }
 
+func (g *Game) deleteSelectedSquares() {
+	for i := len(g.squares) - 1; i >= 0; i-- {
+		if g.squares[i].Selected {
+			g.squares = slices.Delete(g.squares, i, i+1)
+		}
+	}
+}
+
 func (g *Game) selectSquares(rect rl.Rectangle) {
 	for i := range g.squares {
 		g.squares[i].Selected = rl.CheckCollisionRecs(squareRect(g.squares[i].Pos), rect)
+	}
+}
+
+func (g *Game) squareAt(position rl.Vector2) int {
+	for i := len(g.squares) - 1; i >= 0; i-- {
+		if rl.CheckCollisionPointRec(position, squareRect(g.squares[i].Pos)) {
+			return i
+		}
+	}
+
+	return -1
+}
+
+func (g *Game) selectSquare(index int) {
+	for i := range g.squares {
+		g.squares[i].Selected = false
+	}
+
+	g.squares[index].Selected = true
+}
+
+func (g *Game) selectAllSquares() {
+	for i := range g.squares {
+		g.squares[i].Selected = true
+	}
+}
+
+func (g *Game) clearSelection() {
+	for i := range g.squares {
+		g.squares[i].Selected = false
 	}
 }
 

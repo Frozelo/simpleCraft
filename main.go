@@ -13,6 +13,8 @@ const (
 	windowHeight           = 720
 	windowTitle            = "SimpleCraft Sim"
 	targetFPS              = 60
+	squareMoveSpeed        = 200
+	circleMoveSpeed        = 120
 	squareSize             = 20
 	circleRadius           = float32(squareSize) / 2
 	doubleClickInterval    = 0.35
@@ -34,8 +36,10 @@ const (
 type Shape struct {
 	Type     ShapeType
 	Pos      rl.Vector2
+	Target   rl.Vector2
 	Color    rl.Color
 	Selected bool
+	IsMoving bool
 }
 
 type Game struct {
@@ -63,7 +67,7 @@ func (g *Game) run() {
 	rl.SetTargetFPS(targetFPS)
 
 	for !rl.WindowShouldClose() {
-		g.update()
+		g.update(rl.GetFrameTime())
 
 		rl.BeginDrawing()
 		rl.ClearBackground(rl.Black)
@@ -72,7 +76,7 @@ func (g *Game) run() {
 	}
 }
 
-func (g *Game) update() {
+func (g *Game) update(dt float32) {
 	// Create one shape at the cursor position when its key is pressed.
 	if rl.IsKeyPressed(rl.KeyS) {
 		g.addShape(ShapeSquare, rl.GetMousePosition())
@@ -90,10 +94,14 @@ func (g *Game) update() {
 	if rl.IsMouseButtonReleased(rl.MouseButtonLeft) && g.selecting {
 		g.finishSelection(rl.GetMousePosition(), rl.GetTime())
 	}
+	if rl.IsMouseButtonPressed(rl.MouseButtonRight) {
+		g.moveSelectedShapes(rl.GetMousePosition())
+	}
 
 	if rl.IsKeyPressed(rl.KeyBackspace) {
 		g.deleteSelectedShapes()
 	}
+	g.advanceShapes(dt)
 }
 
 func (g *Game) finishSelection(end rl.Vector2, now float64) {
@@ -226,6 +234,42 @@ func (g *Game) selectAllShapesOfType(shapeType ShapeType) {
 func (g *Game) clearSelection() {
 	for i := range g.shapes {
 		g.shapes[i].Selected = false
+	}
+}
+
+func (g *Game) moveSelectedShapes(target rl.Vector2) {
+	for i := range g.shapes {
+		shape := &g.shapes[i]
+		if shape.Selected {
+			shape.Target = target
+			shape.IsMoving = shape.Pos != target
+		}
+	}
+}
+
+func (g *Game) advanceShapes(dt float32) {
+	if dt <= 0 {
+		return
+	}
+	for i := range g.shapes {
+		shape := &g.shapes[i]
+		if !shape.IsMoving {
+			continue
+		}
+		step := circleMoveSpeed * dt
+		if shape.Type == ShapeSquare {
+			step = squareMoveSpeed * dt
+		}
+		dx := shape.Target.X - shape.Pos.X
+		dy := shape.Target.Y - shape.Pos.Y
+		distance := rl.Vector2Distance(shape.Pos, shape.Target)
+		if distance <= step {
+			shape.Pos = shape.Target
+			shape.IsMoving = false
+			continue
+		}
+		shape.Pos.X += dx / distance * step
+		shape.Pos.Y += dy / distance * step
 	}
 }
 

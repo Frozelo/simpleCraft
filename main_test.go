@@ -103,6 +103,41 @@ func TestSelectionRectForClickUsesCursorPoint(t *testing.T) {
 	}
 }
 
+func TestMoveSelectedShapes(t *testing.T) {
+	g := &Game{shapes: []Shape{
+		{Type: ShapeSquare, Pos: rl.Vector2{X: 10}, Selected: true},
+		{Type: ShapeCircle, Pos: rl.Vector2{X: 20}, Selected: true},
+		{Type: ShapeSquare, Pos: rl.Vector2{X: 30}},
+	}}
+	target := rl.Vector2{X: 100, Y: 50}
+	g.moveSelectedShapes(target)
+	for i := 0; i < 2; i++ {
+		if g.shapes[i].Target != target || !g.shapes[i].IsMoving || g.shapes[i].Pos.X != float32((i+1)*10) {
+			t.Fatalf("shape %d = %#v, want target without teleport", i, g.shapes[i])
+		}
+	}
+	if g.shapes[2].IsMoving || g.shapes[2].Target != (rl.Vector2{}) {
+		t.Fatalf("unselected shape = %#v, want unchanged", g.shapes[2])
+	}
+}
+
+func TestAdvanceShapesUsesTypeSpeedAndStopsAtTarget(t *testing.T) {
+	g := &Game{shapes: []Shape{
+		{Type: ShapeSquare, Target: rl.Vector2{X: 200}, IsMoving: true},
+		{Type: ShapeCircle, Target: rl.Vector2{X: 120}, IsMoving: true},
+	}}
+	g.advanceShapes(0.25)
+	if g.shapes[0].Pos.X != 50 || g.shapes[1].Pos.X != 30 {
+		t.Fatalf("positions = %v and %v, want 50 and 30", g.shapes[0].Pos.X, g.shapes[1].Pos.X)
+	}
+	g.advanceShapes(1)
+	for _, shape := range g.shapes {
+		if shape.Pos != shape.Target || shape.IsMoving {
+			t.Fatalf("shape = %#v, want exact target and stopped", shape)
+		}
+	}
+}
+
 func releaseSelection(g *Game, start, end rl.Vector2, now float64) {
 	g.selectionStart = start
 	g.selecting = true

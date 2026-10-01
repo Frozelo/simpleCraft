@@ -1,6 +1,6 @@
 # SimpleCraft Sim
 
-A minimalist RTS project written in Go for experimenting with game simulation, unit control, pathfinding, and performance optimization.
+A minimalist RTS project written in Odin for experimenting with game simulation, unit control, pathfinding, and performance optimization.
 
 The main goal is not to build a full StarCraft II clone, but to explore the technical principles behind a responsive and well-engineered RTS:
 
@@ -57,17 +57,13 @@ Eventually, the simulation should support hundreds of units running simultaneous
 
 ## Language
 
-Go.
+Odin.
 
-The core game logic should be written in pure Go and remain independent from the renderer.
+The core game logic should be written in Odin and remain independent from the renderer.
 
 ## Rendering / Input
 
-The initial implementation uses:
-
-```text
-raylib-go
-```
+The initial implementation uses Odin's `vendor:raylib` bindings.
 
 Raylib acts only as a thin platform layer responsible for:
 
@@ -83,13 +79,19 @@ It should not contain the actual game logic.
 
 The architecture should allow replacing raylib in the future with:
 
-- Ebitengine;
 - SDL;
 - OpenGL;
 - Vulkan;
 - another renderer;
 
 without significantly modifying the simulation core.
+
+Build and test:
+
+```text
+odin run .
+odin test .
+```
 
 ---
 
@@ -143,34 +145,30 @@ The renderer should never directly modify unit positions.
 
 Basic world structure:
 
-```go
-type World struct {
-    Units []Unit
+```odin
+World :: struct {
+    units: [dynamic]Unit,
 }
 ```
 
 A unit:
 
-```go
-type Unit struct {
-    ID int
+```odin
+Unit :: struct {
+    id: int,
 
-    X float32
-    Y float32
-
-    TargetX float32
-    TargetY float32
-
-    Speed float32
+    position: [2]f32,
+    target:   [2]f32,
+    speed:    f32,
 }
 ```
 
 World update:
 
-```go
-func (w *World) Update(dt float32) {
-    for i := range w.Units {
-        w.Units[i].Update(dt)
+```odin
+update :: proc(world: ^World, dt: f32) {
+    for &unit in world.units {
+        update_unit(&unit, dt)
     }
 }
 ```
@@ -191,7 +189,7 @@ Game logic should never live inside the rendering code.
 
 Initial game loop:
 
-```go
+```odin
 for !rl.WindowShouldClose() {
     update()
     draw()
@@ -244,31 +242,24 @@ Planned structure:
 
 ```text
 rts-sim/
-├── cmd/
-│   └── sandbox/
-│       └── main.go
-│
-├── internal/
+├── src/
+│   ├── main.odin
 │   ├── sim/
-│   │   ├── world.go
-│   │   ├── unit.go
-│   │   └── command.go
-│   │
+│   │   ├── world.odin
+│   │   ├── unit.odin
+│   │   └── command.odin
 │   ├── input/
-│   │   └── input.go
-│   │
+│   │   └── input.odin
 │   └── render/
-│       └── render.go
-│
-├── go.mod
+│       └── render.odin
 └── README.md
 ```
 
 During the earliest stage, the project can remain as simple as:
 
 ```text
-main.go
-go.mod
+main.odin
+main_test.odin
 ```
 
 The code can be separated into packages once the project grows enough to justify it.
@@ -358,18 +349,16 @@ Input should not directly modify a unit.
 
 Instead of:
 
-```go
-unit.TargetX = mouseX
+```odin
+unit.target.x = mouse_x
 ```
 
 use a command:
 
-```go
-type Command struct {
-    UnitIDs []int
-
-    TargetX float32
-    TargetY float32
+```odin
+Command :: struct {
+    unit_ids: [dynamic]int,
+    target:   [2]f32,
 }
 ```
 
@@ -536,7 +525,7 @@ The simulation hot path should therefore remain simple.
 Prefer:
 
 ```text
-slices
+dynamic arrays
 structs
 preallocated buffers
 buffer reuse
@@ -547,9 +536,8 @@ Avoid unnecessary:
 
 ```text
 allocation per unit per tick
-goroutine per unit
-channels between every subsystem
-complex interface hierarchies
+thread per unit
+virtual calls between every subsystem
 reflection
 ```
 
@@ -557,13 +545,13 @@ reflection
 
 # Concurrency
 
-Go provides a powerful concurrency model, but that does not mean every unit should run inside its own goroutine.
+Odin makes data-oriented code the default, but that does not mean every unit should run on its own thread.
 
 Avoid:
 
-```go
-for _, unit := range units {
-    go unit.Update()
+```odin
+for &unit in units {
+    thread.create_and_start_with_poly_data(&unit, update_unit)
 }
 ```
 
@@ -576,7 +564,7 @@ deterministic
 cache-friendly
 ```
 
-Parallelism should only be introduced later where profiling shows a real benefit.
+Parallelism should only be introduced later, through `core:thread`, where profiling shows a real benefit.
 
 ---
 
@@ -584,24 +572,23 @@ Parallelism should only be introduced later where profiling shows a real benefit
 
 The project will not use an ECS architecture initially.
 
-Regular Go structures are sufficient:
+Regular Odin structures are sufficient:
 
-```go
-type World struct {
-    Units []Unit
+```odin
+World :: struct {
+    units: [dynamic]Unit,
 }
 ```
 
 This keeps the implementation simple and allows the actual requirements of the project to emerge naturally.
 
-If necessary, the simulation can later move toward a more data-oriented representation:
+If necessary, the simulation can later move toward a structure-of-arrays layout, which Odin supports directly:
 
-```go
-positions  []Vec2
-velocities []Vec2
-health     []int
-states     []State
+```odin
+units: #soa[dynamic]Unit
 ```
+
+That stores each field in its own array while the update loop still iterates units.
 
 ---
 

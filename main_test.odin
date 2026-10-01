@@ -289,6 +289,71 @@ test_selection_rect_for_click_uses_cursor_point :: proc(t: ^testing.T) {
 	testing.expect_value(t, rect.height, f32(1))
 }
 
+@(test)
+test_double_click_tracks_moving_shape :: proc(t: ^testing.T) {
+	game := Game{shapes = make([dynamic]Shape, 2)}
+	defer delete(game.shapes)
+	game.shapes[0] = {
+		team = .Player,
+		pos = {20, 20},
+		target = {200, 20},
+		is_moving = true,
+	}
+	game.shapes[1] = {team = .Player, pos = {100, 100}}
+
+	select_clicked_shape(&game, game.shapes[0].pos, 1)
+	advance_shapes(&game, 0.1)
+	select_clicked_shape(&game, game.shapes[0].pos, 1.1)
+	testing.expect(t, game.shapes[1].selected, "double click should track the same moving shape")
+}
+
+@(test)
+test_clicking_different_shape_at_same_position_is_not_double_click :: proc(t: ^testing.T) {
+	game := Game{shapes = make([dynamic]Shape, 2)}
+	defer delete(game.shapes)
+	game.shapes[0] = {team = .Player, pos = {20, 20}}
+	game.shapes[1] = {team = .Player, pos = {100, 100}}
+
+	select_clicked_shape(&game, {20, 20}, 1)
+	game.shapes[0].pos = {60, 60}
+	game.shapes[1].pos = {20, 20}
+	select_clicked_shape(&game, {20, 20}, 1.1)
+	testing.expect(t, !game.shapes[0].selected)
+	testing.expect(t, game.shapes[1].selected)
+	testing.expect(t, game.has_last_click)
+}
+
+@(test)
+test_delete_selected_shapes_preserves_survivor_order :: proc(t: ^testing.T) {
+	game := Game{shapes = make([dynamic]Shape, 6)}
+	defer delete(game.shapes)
+	for &shape, i in game.shapes {
+		shape = {team = .Player, pos = {f32(i), 0}, selected = i % 2 == 0}
+	}
+	game.shapes[2].team = .AI
+	kept := [4]Shape{game.shapes[1], game.shapes[2], game.shapes[3], game.shapes[5]}
+
+	delete_selected_shapes(&game)
+	if !testing.expect_value(t, len(game.shapes), len(kept)) {
+		return
+	}
+	for shape, i in game.shapes {
+		testing.expect_value(t, shape, kept[i])
+	}
+	clear_selection(&game)
+	delete_selected_shapes(&game)
+	testing.expect_value(t, len(game.shapes), len(kept))
+
+	for &shape in game.shapes {
+		shape.team = .Player
+		shape.selected = true
+	}
+	delete_selected_shapes(&game)
+	testing.expect_value(t, len(game.shapes), 0)
+	delete_selected_shapes(&game)
+	testing.expect_value(t, len(game.shapes), 0)
+}
+
 release_selection :: proc(game: ^Game, start, end: rl.Vector2, now: f64) {
 	game.selection_start = start
 	game.selecting = true

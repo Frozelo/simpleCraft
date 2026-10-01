@@ -74,10 +74,9 @@ Game :: struct {
 	selection_start: rl.Vector2,
 	selecting:       bool,
 
-	last_click_at:         f64,
-	last_click_position:   rl.Vector2,
-	last_click_shape_type: Shape_Type,
-	has_last_click:        bool,
+	last_click_at:          f64,
+	last_click_shape_index: int,
+	has_last_click:         bool,
 }
 
 main :: proc() {
@@ -159,8 +158,8 @@ select_clicked_shape :: proc(game: ^Game, position: rl.Vector2, now: f64) {
 
 	shape := game.shapes[index]
 	is_double_click := game.has_last_click &&
-		shape.pos == game.last_click_position &&
-		shape.shape_type == game.last_click_shape_type &&
+		index == game.last_click_shape_index &&
+		now >= game.last_click_at &&
 		now - game.last_click_at <= DOUBLE_CLICK_INTERVAL
 	if is_double_click {
 		select_all_shapes_of_type(game, shape.shape_type)
@@ -170,8 +169,7 @@ select_clicked_shape :: proc(game: ^Game, position: rl.Vector2, now: f64) {
 
 	select_shape(game, index)
 	game.last_click_at = now
-	game.last_click_position = shape.pos
-	game.last_click_shape_type = shape.shape_type
+	game.last_click_shape_index = index
 	game.has_last_click = true
 }
 
@@ -262,13 +260,18 @@ add_shape :: proc(game: ^Game, shape_type: Shape_Type, position: rl.Vector2) {
 }
 
 delete_selected_shapes :: proc(game: ^Game) {
-	// Walk backwards so ordered_remove keeps the remaining shapes in place.
-	for i := len(game.shapes) - 1; i >= 0; i -= 1 {
-		shape := game.shapes[i]
+	kept := 0
+	for shape, i in game.shapes {
 		if shape.team == .Player && shape.selected {
-			ordered_remove(&game.shapes, i)
+			continue
 		}
+		if kept != i {
+			game.shapes[kept] = shape
+		}
+		kept += 1
 	}
+	resize(&game.shapes, kept)
+	// Compaction can change indices used to recognize a double click.
 	game.has_last_click = false
 }
 

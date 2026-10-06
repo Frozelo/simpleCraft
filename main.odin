@@ -525,11 +525,36 @@ clear_selection :: proc(game: ^Game) {
 }
 
 move_selected_shapes :: proc(game: ^Game, target: rl.Vector2) {
-	for &shape in game.shapes {
-		if shape.team == .Player && shape.selected {
-			shape.target = target
-			shape.is_moving = shape.pos != target
+	selectedCount := 0
+	center := rl.Vector2{}
+
+	for shape in game.shapes {
+		if shape.team != .Player || !shape.selected	{
+			continue
 		}
+
+	center.x += shape.pos.x
+	center.y += shape.pos.y
+	selectedCount += 1
+	}
+
+	if selectedCount == 0 {
+		return
+	}
+
+	center.x /= f32(selectedCount)
+	center.y /= f32(selectedCount)
+
+	for &shape in game.shapes {
+		if shape.team != .Player || !shape.selected {
+			continue
+		}
+		shape.target = {
+			target.x + (shape.pos.x - center.x),
+			target.y + (shape.pos.y - center.y),
+		}
+		
+		shape.is_moving = shape.pos != shape.target
 	}
 }
 

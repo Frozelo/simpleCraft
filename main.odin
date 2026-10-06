@@ -2,6 +2,7 @@ package game
 
 import "core:fmt"
 import "core:log"
+import "core:math"
 import rl "vendor:raylib"
 
 WINDOW_WIDTH :: 1280
@@ -17,6 +18,7 @@ PLACEMENT_BLOCKED_TEXT :: "Cannot place shape here"
 Shape_Type :: enum u16 {
 	Square,
 	Circle,
+	Triangle,
 }
 
 Team :: enum u8 {
@@ -27,6 +29,7 @@ Team :: enum u8 {
 Shape_Geometry :: enum u8 {
 	Square,
 	Circle,
+	Triangle,
 }
 
 Shape_Definition :: struct {
@@ -60,6 +63,14 @@ SHAPE_DEFINITIONS := [Shape_Type]Shape_Definition {
 		default_team = .AI,
 		spawn_key = .C,
 	},
+	.Triangle = {
+		name = "Triangles",
+		geometry = .Triangle,
+		size = 25,
+		move_speed = 150,
+		default_team = .Player,
+		spawn_key = .T,
+	},
 }
 
 Shape :: struct {
@@ -72,16 +83,13 @@ Shape :: struct {
 }
 
 Game :: struct {
-	shapes: [dynamic]Shape,
-
-	selection_start: rl.Vector2,
-	selecting:       bool,
-
+	shapes:                 [dynamic]Shape,
+	selection_start:        rl.Vector2,
+	selecting:              bool,
 	last_click_at:          f64,
 	last_click_shape_index: int,
 	has_last_click:         bool,
-
-	notice_remaining: f32,
+	notice_remaining:       f32,
 }
 
 main :: proc() {
@@ -163,7 +171,8 @@ select_clicked_shape :: proc(game: ^Game, position: rl.Vector2, now: f64) {
 	}
 
 	shape := game.shapes[index]
-	is_double_click := game.has_last_click &&
+	is_double_click :=
+		game.has_last_click &&
 		index == game.last_click_shape_index &&
 		now >= game.last_click_at &&
 		now - game.last_click_at <= DOUBLE_CLICK_INTERVAL
@@ -203,7 +212,8 @@ draw :: proc(game: ^Game) {
 		if shape.selected {
 			selected += 1
 		}
-		preview := game.selecting && shape.team == .Player && shape_intersects_rect(shape, selection)
+		preview :=
+			game.selecting && shape.team == .Player && shape_intersects_rect(shape, selection)
 		if preview {
 			pre_selected += 1
 		}
@@ -289,17 +299,12 @@ add_shape :: proc(game: ^Game, shape_type: Shape_Type, position: rl.Vector2) {
 	definition := SHAPE_DEFINITIONS[shape_type]
 	shape := Shape {
 		shape_type = shape_type,
-		team = definition.default_team,
-		pos = position,
+		team       = definition.default_team,
+		pos        = position,
 	}
 	if overlaps_any_shape(game, shape) {
 		show_placement_notice(game)
-		log.infof(
-			"shape placement blocked type=%v x=%v y=%v",
-			shape_type,
-			position.x,
-			position.y,
-		)
+		log.infof("shape placement blocked type=%v x=%v y=%v", shape_type, position.x, position.y)
 		return
 	}
 
@@ -415,6 +420,9 @@ draw_shape :: proc(shape: Shape, color: rl.Color) {
 		rl.DrawRectangleRec(square_rect(shape.pos, definition.size), color)
 	case .Circle:
 		rl.DrawCircleV(shape.pos, definition.size / 2, color)
+	case .Triangle:
+		v1, v2, v3 := triangle_vertices(shape.pos, definition.size)
+		rl.DrawTriangle(v1, v2, v3, color)
 	}
 }
 
@@ -425,6 +433,9 @@ draw_shape_outline :: proc(shape: Shape, color: rl.Color) {
 		rl.DrawRectangleLinesEx(square_rect(shape.pos, definition.size + 4), 2, color)
 	case .Circle:
 		rl.DrawCircleLinesV(shape.pos, definition.size / 2 + 3, color)
+	case .Triangle:
+		v1, v2, v3 := triangle_vertices(shape.pos, definition.size + 4)
+		rl.DrawTriangleLines(v1, v2, v3, color)
 	}
 }
 
@@ -435,6 +446,9 @@ shape_contains_point :: proc(shape: Shape, point: rl.Vector2) -> bool {
 		return rl.CheckCollisionPointRec(point, square_rect(shape.pos, definition.size))
 	case .Circle:
 		return rl.CheckCollisionPointCircle(point, shape.pos, definition.size / 2)
+	case .Triangle:
+		v1, v2, v3 := triangle_vertices(shape.pos, definition.size)
+		return rl.CheckCollisionPointTriangle(point, v1, v2, v3)
 	}
 	return false
 }
@@ -450,14 +464,36 @@ shapes_overlap :: proc(a, b: Shape) -> bool {
 			return rl.CheckCollisionRecs(a_rect, square_rect(b.pos, b_definition.size))
 		case .Circle:
 			return rl.CheckCollisionCircleRec(b.pos, b_definition.size / 2, a_rect)
+		case .Triangle:
+			return triangle_overlaps_rect(triangle_points(b.pos, b_definition.size), a_rect)
 		}
 	case .Circle:
 		a_radius := a_definition.size / 2
 		switch b_definition.geometry {
 		case .Square:
-			return rl.CheckCollisionCircleRec(a.pos, a_radius, square_rect(b.pos, b_definition.size))
+			return rl.CheckCollisionCircleRec(
+				a.pos,
+				a_radius,
+				square_rect(b.pos, b_definition.size),
+			)
 		case .Circle:
 			return rl.CheckCollisionCircles(a.pos, a_radius, b.pos, b_definition.size / 2)
+		case .Triangle:
+			return triangle_overlaps_circle(
+				triangle_points(b.pos, b_definition.size),
+				a.pos,
+				a_radius,
+			)
+		}
+	case .Triangle:
+		tri := triangle_points(a.pos, a_definition.size)
+		switch b_definition.geometry {
+		case .Square:
+			return triangle_overlaps_rect(tri, square_rect(b.pos, b_definition.size))
+		case .Circle:
+			return triangle_overlaps_circle(tri, b.pos, b_definition.size / 2)
+		case .Triangle:
+			return triangles_overlap(tri, triangle_points(b.pos, b_definition.size))
 		}
 	}
 	return false
@@ -470,17 +506,134 @@ shape_intersects_rect :: proc(shape: Shape, rect: rl.Rectangle) -> bool {
 		return rl.CheckCollisionRecs(square_rect(shape.pos, definition.size), rect)
 	case .Circle:
 		return rl.CheckCollisionCircleRec(shape.pos, definition.size / 2, rect)
+	case .Triangle:
+		return triangle_overlaps_rect(triangle_points(shape.pos, definition.size), rect)
 	}
 	return false
 }
 
-square_rect :: proc(position: rl.Vector2, size: f32) -> rl.Rectangle {
-	return {
-		x = position.x - size / 2,
-		y = position.y - size / 2,
-		width = size,
-		height = size,
+// Equilateral triangle with its centroid at position. size is the side length.
+// The centroid is 2/3 of the height below the top vertex, so the base sits 1/3 below the center.
+// v1 is the top vertex, v2 the bottom-left, v3 the bottom-right (counter-clockwise).
+triangle_vertices :: proc(position: rl.Vector2, size: f32) -> (v1, v2, v3: rl.Vector2) {
+	height := size * math.SQRT_THREE / 2
+	v1 = {position.x, position.y - height * 2 / 3}
+	v2 = {position.x - size / 2, position.y + height / 3}
+	v3 = {position.x + size / 2, position.y + height / 3}
+	return
+}
+
+triangle_points :: proc(position: rl.Vector2, size: f32) -> [3]rl.Vector2 {
+	v1, v2, v3 := triangle_vertices(position, size)
+	return {v1, v2, v3}
+}
+
+triangle_overlaps_rect :: proc(tri: [3]rl.Vector2, rect: rl.Rectangle) -> bool {
+	for vertex in tri {
+		if rl.CheckCollisionPointRec(vertex, rect) {
+			return true
+		}
 	}
+
+	corners := rect_corners(rect)
+	for corner in corners {
+		if rl.CheckCollisionPointTriangle(corner, tri[0], tri[1], tri[2]) {
+			return true
+		}
+	}
+
+	for i in 0 ..< 3 {
+		for j in 0 ..< 4 {
+			if segments_cross(tri[i], tri[(i + 1) % 3], corners[j], corners[(j + 1) % 4]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+triangle_overlaps_circle :: proc(tri: [3]rl.Vector2, center: rl.Vector2, radius: f32) -> bool {
+	if rl.CheckCollisionPointTriangle(center, tri[0], tri[1], tri[2]) {
+		return true
+	}
+	for i in 0 ..< 3 {
+		if point_segment_distance(center, tri[i], tri[(i + 1) % 3]) <= radius {
+			return true
+		}
+	}
+	return false
+}
+
+triangles_overlap :: proc(a, b: [3]rl.Vector2) -> bool {
+	for vertex in a {
+		if rl.CheckCollisionPointTriangle(vertex, b[0], b[1], b[2]) {
+			return true
+		}
+	}
+	for vertex in b {
+		if rl.CheckCollisionPointTriangle(vertex, a[0], a[1], a[2]) {
+			return true
+		}
+	}
+	// Vertices lie on the boundary, so a triangle does not contain its own corners.
+	if rl.CheckCollisionPointTriangle(triangle_centroid(a), b[0], b[1], b[2]) ||
+	   rl.CheckCollisionPointTriangle(triangle_centroid(b), a[0], a[1], a[2]) {
+		return true
+	}
+	for i in 0 ..< 3 {
+		for j in 0 ..< 3 {
+			if segments_cross(a[i], a[(i + 1) % 3], b[j], b[(j + 1) % 3]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+triangle_centroid :: proc(tri: [3]rl.Vector2) -> rl.Vector2 {
+	return {(tri[0].x + tri[1].x + tri[2].x) / 3, (tri[0].y + tri[1].y + tri[2].y) / 3}
+}
+
+rect_corners :: proc(rect: rl.Rectangle) -> [4]rl.Vector2 {
+	return {
+		{rect.x, rect.y},
+		{rect.x + rect.width, rect.y},
+		{rect.x + rect.width, rect.y + rect.height},
+		{rect.x, rect.y + rect.height},
+	}
+}
+
+segments_cross :: proc(a1, a2, b1, b2: rl.Vector2) -> bool {
+	ab_b1 := cross(a1, a2, b1)
+	ab_b2 := cross(a1, a2, b2)
+	ba_a1 := cross(b1, b2, a1)
+	ba_a2 := cross(b1, b2, a2)
+	// Shared endpoints and overlapping edges are a touch, not an overlap.
+	if ab_b1 == 0 || ab_b2 == 0 || ba_a1 == 0 || ba_a2 == 0 {
+		return false
+	}
+	return (ab_b1 > 0) != (ab_b2 > 0) && (ba_a1 > 0) != (ba_a2 > 0)
+}
+
+cross :: proc(a, b, c: rl.Vector2) -> f32 {
+	return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+}
+
+point_segment_distance :: proc(point, a, b: rl.Vector2) -> f32 {
+	ab := rl.Vector2{b.x - a.x, b.y - a.y}
+	len_sq := ab.x * ab.x + ab.y * ab.y
+	if len_sq == 0 {
+		return rl.Vector2Distance(point, a)
+	}
+
+	t := ((point.x - a.x) * ab.x + (point.y - a.y) * ab.y) / len_sq
+	t = clamp(t, 0, 1)
+	closest := rl.Vector2{a.x + ab.x * t, a.y + ab.y * t}
+	return rl.Vector2Distance(point, closest)
+}
+
+square_rect :: proc(position: rl.Vector2, size: f32) -> rl.Rectangle {
+	return {x = position.x - size / 2, y = position.y - size / 2, width = size, height = size}
 }
 
 selection_rect :: proc(start, end: rl.Vector2) -> rl.Rectangle {
@@ -497,10 +650,5 @@ selection_rect :: proc(start, end: rl.Vector2) -> rl.Rectangle {
 		s.y, e.y = e.y, s.y
 	}
 
-	return {
-		x = s.x,
-		y = s.y,
-		width = e.x - s.x,
-		height = e.y - s.y,
-	}
+	return {x = s.x, y = s.y, width = e.x - s.x, height = e.y - s.y}
 }

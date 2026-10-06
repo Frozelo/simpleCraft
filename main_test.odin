@@ -101,6 +101,47 @@ test_shape_geometry :: proc(t: ^testing.T) {
 		!shape_contains_point(Shape{shape_type = .Circle, pos = position}, corner),
 		"circle should not contain a point outside its radius",
 	)
+	testing.expect(
+		t,
+		shape_contains_point(Shape{shape_type = .Triangle, pos = position}, position),
+		"triangle should contain its center",
+	)
+}
+
+@(test)
+test_triangle_vertices_from_center :: proc(t: ^testing.T) {
+	center := rl.Vector2{40, 50}
+	size: f32 = 30
+	v1, v2, v3 := triangle_vertices(center, size)
+
+	centroid := rl.Vector2 {
+		(v1.x + v2.x + v3.x) / 3,
+		(v1.y + v2.y + v3.y) / 3,
+	}
+	testing.expect(t, abs(centroid.x - center.x) < 0.001)
+	testing.expect(t, abs(centroid.y - center.y) < 0.001)
+	testing.expect(t, abs(rl.Vector2Distance(v1, v2) - size) < 0.001)
+	testing.expect(t, abs(rl.Vector2Distance(v2, v3) - size) < 0.001)
+	testing.expect(t, abs(rl.Vector2Distance(v3, v1) - size) < 0.001)
+	testing.expect(t, v1.y < center.y, "top vertex is above the center")
+	testing.expect(t, v2.x < center.x)
+	testing.expect(t, v3.x > center.x)
+}
+
+@(test)
+test_triangle_overlap :: proc(t: ^testing.T) {
+	triangle :: proc(pos: rl.Vector2) -> Shape {
+		return {shape_type = .Triangle, pos = pos}
+	}
+	square :: proc(pos: rl.Vector2) -> Shape {
+		return {shape_type = .Square, pos = pos}
+	}
+
+	testing.expect(t, shapes_overlap(triangle({0, 0}), triangle({0, 0})))
+	testing.expect(t, !shapes_overlap(triangle({0, 0}), triangle({80, 0})))
+	testing.expect(t, shapes_overlap(triangle({0, 0}), square({0, 0})))
+	testing.expect(t, shapes_overlap(square({0, 0}), triangle({0, 0})))
+	testing.expect(t, !shapes_overlap(square({0, 0}), triangle({80, 0})))
 }
 
 @(test)

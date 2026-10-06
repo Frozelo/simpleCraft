@@ -10,6 +10,9 @@ WINDOW_TITLE :: "SimpleCraft Sim"
 TARGET_FPS :: 60
 DOUBLE_CLICK_INTERVAL :: 0.35
 SELECTION_DRAG_THRESHOLD :: 5.0
+NOTICE_DURATION :: 2.0
+NOTICE_FADE :: 1.2
+PLACEMENT_BLOCKED_TEXT :: "Cannot place shape here"
 
 Shape_Type :: enum u16 {
 	Square,
@@ -77,6 +80,8 @@ Game :: struct {
 	last_click_at:          f64,
 	last_click_shape_index: int,
 	has_last_click:         bool,
+
+	notice_remaining: f32,
 }
 
 main :: proc() {
@@ -133,6 +138,7 @@ update :: proc(game: ^Game, dt: f32) {
 		move_selected_shapes(game, rl.GetMousePosition())
 	}
 	advance_shapes(game, dt)
+	advance_notice(game, dt)
 }
 
 finish_selection :: proc(game: ^Game, end: rl.Vector2, now: f64) {
@@ -241,15 +247,63 @@ draw :: proc(game: ^Game) {
 	)
 	rl.DrawText(fmt.ctprintf("Selected: %d", selected), 10, 10, 20, rl.GREEN)
 	rl.DrawText(fmt.ctprintf("PreSelected: %d", pre_selected), 10, 30, 20, rl.GRAY)
+	draw_notice(game)
+}
+
+draw_notice :: proc(game: ^Game) {
+	alpha := notice_alpha(game.notice_remaining)
+	if alpha <= 0 {
+		return
+	}
+
+	text := fmt.ctprintf("%s", PLACEMENT_BLOCKED_TEXT)
+	font_size: i32 = 20
+	width := rl.MeasureText(text, font_size)
+	x := (rl.GetScreenWidth() - width) / 2
+	y := rl.GetScreenHeight() - font_size - 24
+	rl.DrawText(text, x, y, font_size, rl.Fade(rl.RED, alpha))
+}
+
+notice_alpha :: proc(remaining: f32) -> f32 {
+	if remaining <= 0 {
+		return 0
+	}
+	if remaining >= NOTICE_FADE {
+		return 1
+	}
+	return remaining / NOTICE_FADE
+}
+
+advance_notice :: proc(game: ^Game, dt: f32) {
+	if dt <= 0 || game.notice_remaining <= 0 {
+		return
+	}
+	game.notice_remaining = max(0, game.notice_remaining - dt)
+}
+
+show_placement_notice :: proc(game: ^Game) {
+	game.notice_remaining = NOTICE_DURATION
 }
 
 add_shape :: proc(game: ^Game, shape_type: Shape_Type, position: rl.Vector2) {
 	definition := SHAPE_DEFINITIONS[shape_type]
-	append(&game.shapes, Shape {
+	shape := Shape {
 		shape_type = shape_type,
 		team = definition.default_team,
 		pos = position,
-	})
+	}
+	if overlaps_any_shape(game, shape) {
+		show_placement_notice(game)
+		log.infof(
+			"shape placement blocked type=%v x=%v y=%v",
+			shape_type,
+			position.x,
+			position.y,
+		)
+		return
+	}
+
+	append(&game.shapes, shape)
 	log.infof(
 		"shape created type=%v team=%v x=%v y=%v",
 		shape_type,
@@ -257,6 +311,15 @@ add_shape :: proc(game: ^Game, shape_type: Shape_Type, position: rl.Vector2) {
 		position.x,
 		position.y,
 	)
+}
+
+overlaps_any_shape :: proc(game: ^Game, candidate: Shape) -> bool {
+	for existing in game.shapes {
+		if shapes_overlap(candidate, existing) {
+			return true
+		}
+	}
+	return false
 }
 
 delete_selected_shapes :: proc(game: ^Game) {
@@ -372,6 +435,30 @@ shape_contains_point :: proc(shape: Shape, point: rl.Vector2) -> bool {
 		return rl.CheckCollisionPointRec(point, square_rect(shape.pos, definition.size))
 	case .Circle:
 		return rl.CheckCollisionPointCircle(point, shape.pos, definition.size / 2)
+	}
+	return false
+}
+
+shapes_overlap :: proc(a, b: Shape) -> bool {
+	a_definition := SHAPE_DEFINITIONS[a.shape_type]
+	b_definition := SHAPE_DEFINITIONS[b.shape_type]
+	switch a_definition.geometry {
+	case .Square:
+		a_rect := square_rect(a.pos, a_definition.size)
+		switch b_definition.geometry {
+		case .Square:
+			return rl.CheckCollisionRecs(a_rect, square_rect(b.pos, b_definition.size))
+		case .Circle:
+			return rl.CheckCollisionCircleRec(b.pos, b_definition.size / 2, a_rect)
+		}
+	case .Circle:
+		a_radius := a_definition.size / 2
+		switch b_definition.geometry {
+		case .Square:
+			return rl.CheckCollisionCircleRec(a.pos, a_radius, square_rect(b.pos, b_definition.size))
+		case .Circle:
+			return rl.CheckCollisionCircles(a.pos, a_radius, b.pos, b_definition.size / 2)
+		}
 	}
 	return false
 }

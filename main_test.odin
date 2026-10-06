@@ -25,6 +25,63 @@ test_add_shape :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_add_shape_rejects_overlap :: proc(t: ^testing.T) {
+	game: Game
+	defer delete(game.shapes)
+
+	add_shape(&game, .Square, {0, 0})
+	add_shape(&game, .Square, {10, 0})
+	add_shape(&game, .Circle, {0, 0})
+	testing.expect_value(t, len(game.shapes), 1)
+
+	// Squares of size 20 that only share an edge do not overlap.
+	add_shape(&game, .Square, {20, 0})
+	testing.expect_value(t, len(game.shapes), 2)
+
+	add_shape(&game, .Circle, {100, 0})
+	testing.expect_value(t, len(game.shapes), 3)
+	testing.expect_value(t, game.notice_remaining, NOTICE_DURATION)
+}
+
+@(test)
+test_placement_notice_fades_out :: proc(t: ^testing.T) {
+	game: Game
+	defer delete(game.shapes)
+
+	add_shape(&game, .Square, {0, 0})
+	add_shape(&game, .Square, {0, 0})
+	testing.expect_value(t, notice_alpha(game.notice_remaining), f32(1))
+
+	advance_notice(&game, NOTICE_DURATION - NOTICE_FADE)
+	testing.expect_value(t, notice_alpha(game.notice_remaining), f32(1))
+
+	advance_notice(&game, NOTICE_FADE / 2)
+	testing.expect_value(t, notice_alpha(game.notice_remaining), f32(0.5))
+
+	advance_notice(&game, NOTICE_FADE)
+	testing.expect_value(t, game.notice_remaining, f32(0))
+	testing.expect_value(t, notice_alpha(game.notice_remaining), f32(0))
+}
+
+@(test)
+test_shapes_overlap :: proc(t: ^testing.T) {
+	square :: proc(pos: rl.Vector2) -> Shape {
+		return {shape_type = .Square, pos = pos}
+	}
+	circle :: proc(pos: rl.Vector2) -> Shape {
+		return {shape_type = .Circle, pos = pos}
+	}
+
+	testing.expect(t, shapes_overlap(square({0, 0}), square({10, 0})))
+	testing.expect(t, !shapes_overlap(square({0, 0}), square({20, 0})))
+	testing.expect(t, shapes_overlap(circle({0, 0}), circle({20, 0})))
+	testing.expect(t, !shapes_overlap(circle({0, 0}), circle({21, 0})))
+	testing.expect(t, shapes_overlap(square({0, 0}), circle({15, 0})))
+	testing.expect(t, shapes_overlap(circle({15, 0}), square({0, 0})))
+	testing.expect(t, !shapes_overlap(square({0, 0}), circle({30, 0})))
+}
+
+@(test)
 test_team_color :: proc(t: ^testing.T) {
 	testing.expect_value(t, TEAM_COLOR[.Player], rl.GREEN)
 	testing.expect_value(t, TEAM_COLOR[.AI], rl.BLUE)

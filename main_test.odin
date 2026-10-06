@@ -295,28 +295,40 @@ test_move_selected_shapes_sets_individual_targets :: proc(t: ^testing.T) {
 	game.shapes[1] = {shape_type = .Circle, team = .Player, pos = {20, 0}, selected = true}
 	game.shapes[2] = {shape_type = .Square, team = .Player, pos = {30, 0}}
 
-	target := rl.Vector2{100, 50}
-	move_selected_shapes(&game, target)
+	click := rl.Vector2{100, 50}
+	move_selected_shapes(&game, click)
 
+	center := rl.Vector2{}
 	for i in 0 ..< 2 {
-		testing.expect_value(t, game.shapes[i].target, target)
+		center.x += game.shapes[i].target.x
+		center.y += game.shapes[i].target.y
 		testing.expect(t, game.shapes[i].is_moving)
 		testing.expect_value(t, game.shapes[i].pos.x, f32((i + 1) * 10))
 	}
+	center.x /= 2
+	center.y /= 2
+	testing.expect(t, abs(center.x - click.x) < 0.01)
+	testing.expect(t, abs(center.y - click.y) < 0.01)
+
+	min_dist := (SHAPE_DEFINITIONS[.Square].size + SHAPE_DEFINITIONS[.Circle].size) / 2 + CLUSTER_GAP
+	dist := rl.Vector2Distance(game.shapes[0].target, game.shapes[1].target)
+	testing.expect(t, dist + 0.01 >= min_dist)
 	testing.expect_value(t, game.shapes[2].target, rl.Vector2{})
 	testing.expect(t, !game.shapes[2].is_moving)
 
+	kept_target := game.shapes[0].target
+	other_target := game.shapes[1].target
 	game.shapes[0].selected = false
 	game.shapes[1].selected = false
 	move_selected_shapes(&game, {200, 0})
-	testing.expect_value(t, game.shapes[0].target, target)
-	testing.expect_value(t, game.shapes[1].target, target)
+	testing.expect_value(t, game.shapes[0].target, kept_target)
+	testing.expect_value(t, game.shapes[1].target, other_target)
 
 	game.shapes[1].selected = true
-	new_target := rl.Vector2{200, 0}
-	move_selected_shapes(&game, new_target)
-	testing.expect_value(t, game.shapes[0].target, target)
-	testing.expect_value(t, game.shapes[1].target, new_target)
+	new_click := rl.Vector2{200, 0}
+	move_selected_shapes(&game, new_click)
+	testing.expect_value(t, game.shapes[0].target, kept_target)
+	testing.expect_value(t, game.shapes[1].target, new_click)
 }
 
 @(test)

@@ -3,6 +3,7 @@ package game
 import "core:fmt"
 import "core:log"
 import "core:math"
+import "core:math/rand"
 import rl "vendor:raylib"
 
 WINDOW_WIDTH :: 1280
@@ -14,6 +15,9 @@ SELECTION_DRAG_THRESHOLD :: 5.0
 NOTICE_DURATION :: 2.0
 NOTICE_FADE :: 1.2
 PLACEMENT_BLOCKED_TEXT :: "Cannot place shape here"
+CLUSTER_JITTER :: 4
+CLUSTER_PASSES :: 15
+CLUSTER_GAP :: 1
 
 Shape_Type :: enum u16 {
 	Square,
@@ -524,37 +528,83 @@ clear_selection :: proc(game: ^Game) {
 	}
 }
 
-move_selected_shapes :: proc(game: ^Game, target: rl.Vector2) {
-	selectedCount := 0
-	center := rl.Vector2{}
+move_selected_shapes :: proc(game: ^Game, click: rl.Vector2) {
+	indices: [dynamic]int
+	defer delete(indices)
 
-	for shape in game.shapes {
-		if shape.team != .Player || !shape.selected	{
-			continue
-		}
-
-	center.x += shape.pos.x
-	center.y += shape.pos.y
-	selectedCount += 1
-	}
-
-	if selectedCount == 0 {
-		return
-	}
-
-	center.x /= f32(selectedCount)
-	center.y /= f32(selectedCount)
-
-	for &shape in game.shapes {
+	for shape, i in game.shapes {
 		if shape.team != .Player || !shape.selected {
 			continue
 		}
-		shape.target = {
-			target.x + (shape.pos.x - center.x),
-			target.y + (shape.pos.y - center.y),
+		append(&indices, i)
+	}
+	if len(indices) == 0 {
+		return
+	}
+
+	targets := make([]rl.Vector2, len(indices))
+	defer delete(targets)
+
+	for i in 0 ..< len(indices) {
+		angle := rand.float32() * math.TAU
+		length := rand.float32() * CLUSTER_JITTER
+		targets[i] = {
+			click.x + math.cos(angle) * length,
+			click.y + math.sin(angle) * length,
 		}
-		
+	}
+
+	for _ in 0 ..< CLUSTER_PASSES {
+		separate_cluster(game, indices[:], targets)
+	}
+
+	center := rl.Vector2{}
+	for point in targets {
+		center.x += point.x
+		center.y += point.y
+	}
+	center.x /= f32(len(targets))
+	center.y /= f32(len(targets))
+
+	for index, i in indices {
+		shape := &game.shapes[index]
+		shape.target = {
+			targets[i].x + (click.x - center.x),
+			targets[i].y + (click.y - center.y),
+		}
 		shape.is_moving = shape.pos != shape.target
+	}
+}
+
+separate_cluster :: proc(game: ^Game, indices: []int, targets: []rl.Vector2) {
+	for a in 0 ..< len(indices) {
+		for b in a + 1 ..< len(indices) {
+			size_a := SHAPE_DEFINITIONS[game.shapes[indices[a]].shape_type].size
+			size_b := SHAPE_DEFINITIONS[game.shapes[indices[b]].shape_type].size
+			min_dist := (size_a + size_b) / 2 + CLUSTER_GAP
+
+			dx := targets[b].x - targets[a].x
+			dy := targets[b].y - targets[a].y
+			dist := math.sqrt(dx * dx + dy * dy)
+			if dist >= min_dist {
+				continue
+			}
+
+			if dist == 0 {
+				angle := rand.float32() * math.TAU
+				dx = math.cos(angle)
+				dy = math.sin(angle)
+				dist = 1
+			}
+
+			push := (min_dist - dist) / 2
+			ux := dx / dist * push
+			uy := dy / dist * push
+			targets[a].x -= ux
+			targets[a].y -= uy
+			targets[b].x += ux
+			targets[b].y += uy
+		}
 	}
 }
 

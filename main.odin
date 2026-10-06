@@ -32,6 +32,42 @@ Shape_Geometry :: enum u8 {
 	Triangle,
 }
 
+Control_Group :: enum u8 {
+	One,
+	Two,
+	Three,
+	Four,
+	Five,
+	Six,
+	Seven,
+	Eight,
+	Nine,
+}
+
+CONTROL_GROUP_KEYS := [Control_Group]rl.KeyboardKey {
+	.One   = .ONE,
+	.Two   = .TWO,
+	.Three = .THREE,
+	.Four  = .FOUR,
+	.Five  = .FIVE,
+	.Six   = .SIX,
+	.Seven = .SEVEN,
+	.Eight = .EIGHT,
+	.Nine  = .NINE,
+}
+
+CONTROL_GROUP_NUMPAD_KEYS := [Control_Group]rl.KeyboardKey {
+	.One   = .KP_1,
+	.Two   = .KP_2,
+	.Three = .KP_3,
+	.Four  = .KP_4,
+	.Five  = .KP_5,
+	.Six   = .KP_6,
+	.Seven = .KP_7,
+	.Eight = .KP_8,
+	.Nine  = .KP_9,
+}
+
 Shape_Definition :: struct {
 	name:         string,
 	geometry:     Shape_Geometry,
@@ -74,6 +110,7 @@ SHAPE_DEFINITIONS := [Shape_Type]Shape_Definition {
 }
 
 Shape :: struct {
+	id:         u32,
 	shape_type: Shape_Type,
 	team:       Team,
 	pos:        rl.Vector2,
@@ -82,8 +119,12 @@ Shape :: struct {
 	is_moving:  bool,
 }
 
+
 Game :: struct {
 	shapes:                 [dynamic]Shape,
+	// Ids stay valid when delete_selected_shapes compacts the array.
+	groups:                 [Control_Group][dynamic]u32,
+	next_shape_id:          u32,
 	selection_start:        rl.Vector2,
 	selecting:              bool,
 	last_click_at:          f64,
@@ -94,8 +135,15 @@ Game :: struct {
 
 main :: proc() {
 	game: Game
-	defer delete(game.shapes)
+	defer delete_game(&game)
 	run(&game)
+}
+
+delete_game :: proc(game: ^Game) {
+	delete(game.shapes)
+	for group in Control_Group {
+		delete(game.groups[group])
+	}
 }
 
 run :: proc(game: ^Game) {
@@ -141,6 +189,8 @@ update :: proc(game: ^Game, dt: f32) {
 	if rl.IsMouseButtonReleased(.LEFT) && game.selecting {
 		finish_selection(game, rl.GetMousePosition(), rl.GetTime())
 	}
+
+	update_control_groups(game)
 
 	if rl.IsMouseButtonPressed(.RIGHT) {
 		move_selected_shapes(game, rl.GetMousePosition())
@@ -308,9 +358,12 @@ add_shape :: proc(game: ^Game, shape_type: Shape_Type, position: rl.Vector2) {
 		return
 	}
 
+	game.next_shape_id += 1
+	shape.id = game.next_shape_id
 	append(&game.shapes, shape)
 	log.infof(
-		"shape created type=%v team=%v x=%v y=%v",
+		"shape created id=%v type=%v team=%v x=%v y=%v",
+		shape.id,
 		shape_type,
 		definition.default_team,
 		position.x,
@@ -328,9 +381,13 @@ overlaps_any_shape :: proc(game: ^Game, candidate: Shape) -> bool {
 }
 
 delete_selected_shapes :: proc(game: ^Game) {
+	removed: [dynamic]u32
+	defer delete(removed)
+
 	kept := 0
 	for shape, i in game.shapes {
 		if shape.team == .Player && shape.selected {
+			append(&removed, shape.id)
 			continue
 		}
 		if kept != i {
@@ -341,6 +398,95 @@ delete_selected_shapes :: proc(game: ^Game) {
 	resize(&game.shapes, kept)
 	// Compaction can change indices used to recognize a double click.
 	game.has_last_click = false
+	remove_ids_from_control_groups(game, removed[:])
+}
+
+update_control_groups :: proc(game: ^Game) {
+	ctrl := rl.IsKeyDown(.LEFT_CONTROL) || rl.IsKeyDown(.RIGHT_CONTROL)
+	for group in Control_Group {
+		if !control_group_pressed(group) {
+			continue
+		}
+		if ctrl {
+			set_control_group(game, group)
+		} else {
+			select_control_group(game, group)
+		}
+	}
+}
+
+control_group_pressed :: proc(group: Control_Group) -> bool {
+	return rl.IsKeyPressed(CONTROL_GROUP_KEYS[group]) || rl.IsKeyPressed(CONTROL_GROUP_NUMPAD_KEYS[group])
+}
+
+set_control_group :: proc(game: ^Game, group: Control_Group) {
+	clear(&game.groups[group])
+	for shape in game.shapes {
+		if shape.team != .Player || !shape.selected {
+			continue
+		}
+		append(&game.groups[group], shape.id)
+	}
+}
+
+select_control_group :: proc(game: ^Game, group: Control_Group) {
+	members := game.groups[group][:]
+	if len(members) == 0 {
+		return
+	}
+
+	found := false
+	for shape in game.shapes {
+		if shape.team == .Player && id_list_contains(members, shape.id) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return
+	}
+
+	for &shape in game.shapes {
+		shape.selected = shape.team == .Player && id_list_contains(members, shape.id)
+	}
+	game.has_last_click = false
+}
+
+remove_ids_from_control_groups :: proc(game: ^Game, removed: []u32) {
+	if len(removed) == 0 {
+		return
+	}
+	for group in Control_Group {
+		remove_ids(&game.groups[group], removed)
+	}
+}
+
+remove_ids :: proc(members: ^[dynamic]u32, removed: []u32) {
+	if len(members) == 0 {
+		return
+	}
+
+	kept := 0
+	for i in 0 ..< len(members) {
+		id := members[i]
+		if id_list_contains(removed, id) {
+			continue
+		}
+		if kept != i {
+			members[kept] = id
+		}
+		kept += 1
+	}
+	resize(members, kept)
+}
+
+id_list_contains :: proc(ids: []u32, id: u32) -> bool {
+	for existing in ids {
+		if existing == id {
+			return true
+		}
+	}
+	return false
 }
 
 select_shapes :: proc(game: ^Game, rect: rl.Rectangle) {

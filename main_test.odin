@@ -452,6 +452,119 @@ test_delete_selected_shapes_preserves_survivor_order :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(game.shapes), 0)
 }
 
+@(test)
+test_add_shape_assigns_ids_in_creation_order :: proc(t: ^testing.T) {
+	game: Game
+	defer delete_game(&game)
+
+	add_shape(&game, .Square, {0, 0})
+	add_shape(&game, .Square, {0, 0})
+	add_shape(&game, .Circle, {100, 0})
+
+	if !testing.expect_value(t, len(game.shapes), 2) {
+		return
+	}
+	testing.expect_value(t, game.shapes[0].id, u32(1))
+	testing.expect_value(t, game.shapes[1].id, u32(2))
+	testing.expect_value(t, game.next_shape_id, u32(2))
+}
+
+@(test)
+test_set_control_group_replaces_members_with_selection :: proc(t: ^testing.T) {
+	game := Game {
+		shapes = make([dynamic]Shape, 4),
+	}
+	defer delete_game(&game)
+	game.shapes[0] = {id = 1, team = .Player, selected = true}
+	game.shapes[1] = {id = 2, team = .AI, selected = true}
+	game.shapes[2] = {id = 3, team = .Player}
+	game.shapes[3] = {id = 4, team = .Player, selected = true}
+
+	set_control_group(&game, .One)
+	set_control_group(&game, .Two)
+	if !testing.expect_value(t, len(game.groups[.One]), 2) {
+		return
+	}
+	testing.expect_value(t, game.groups[.One][0], u32(1))
+	testing.expect_value(t, game.groups[.One][1], u32(4))
+
+	clear_selection(&game)
+	game.shapes[2].selected = true
+	set_control_group(&game, .One)
+	if !testing.expect_value(t, len(game.groups[.One]), 1) {
+		return
+	}
+	testing.expect_value(t, game.groups[.One][0], u32(3))
+	testing.expect_value(t, len(game.groups[.Two]), 2)
+	testing.expect_value(t, game.groups[.Two][0], u32(1))
+	testing.expect_value(t, game.groups[.Two][1], u32(4))
+
+	clear_selection(&game)
+	set_control_group(&game, .One)
+	testing.expect_value(t, len(game.groups[.One]), 0)
+	testing.expect_value(t, len(game.groups[.Two]), 2)
+}
+
+@(test)
+test_select_control_group_replaces_selection :: proc(t: ^testing.T) {
+	game := Game {
+		shapes         = make([dynamic]Shape, 3),
+		has_last_click = true,
+	}
+	defer delete_game(&game)
+	game.shapes[0] = {id = 1, team = .Player}
+	game.shapes[1] = {id = 2, team = .Player, selected = true}
+	game.shapes[2] = {id = 3, team = .Player, selected = true}
+	append(&game.groups[.Four], 1)
+	append(&game.groups[.Four], 3)
+
+	select_control_group(&game, .Four)
+	testing.expect(t, game.shapes[0].selected)
+	testing.expect(t, !game.shapes[1].selected)
+	testing.expect(t, game.shapes[2].selected)
+	testing.expect(t, !game.has_last_click)
+
+	game.shapes[1].selected = true
+	game.has_last_click = true
+	select_control_group(&game, .Nine)
+	testing.expect(t, game.shapes[1].selected)
+	testing.expect(t, game.has_last_click)
+}
+
+@(test)
+test_delete_selected_shape_drops_its_id_from_every_control_group :: proc(t: ^testing.T) {
+	game := Game {
+		shapes = make([dynamic]Shape, 3),
+	}
+	defer delete_game(&game)
+	game.shapes[0] = {id = 1, team = .Player, selected = true}
+	game.shapes[1] = {id = 2, team = .Player, selected = true}
+	game.shapes[2] = {id = 3, team = .Player}
+	set_control_group(&game, .One)
+	set_control_group(&game, .Two)
+
+	game.shapes[0].selected = false
+	delete_selected_shapes(&game)
+
+	if !testing.expect_value(t, len(game.shapes), 2) {
+		return
+	}
+	testing.expect_value(t, game.shapes[0].id, u32(1))
+	testing.expect_value(t, game.shapes[1].id, u32(3))
+	for group in Control_Group {
+		if group == .One || group == .Two {
+			testing.expect_value(t, len(game.groups[group]), 1)
+			testing.expect_value(t, game.groups[group][0], u32(1))
+			continue
+		}
+		testing.expect_value(t, len(game.groups[group]), 0)
+	}
+
+	select_control_group(&game, .One)
+	testing.expect(t, game.shapes[0].selected)
+	testing.expect(t, !game.shapes[1].selected)
+}
+
 release_selection :: proc(game: ^Game, start, end: rl.Vector2, now: f64) {
 	game.selection_start = start
 	game.selecting = true

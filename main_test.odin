@@ -577,6 +577,62 @@ test_delete_selected_shape_drops_its_id_from_every_control_group :: proc(t: ^tes
 	testing.expect(t, !game.shapes[1].selected)
 }
 
+@(test)
+test_control_group_entries_skip_empty_groups :: proc(t: ^testing.T) {
+	game: Game
+	defer delete_game(&game)
+	append(&game.groups[.Three], 1)
+	append(&game.groups[.One], 7, 8)
+	append(&game.groups[.Nine], 4)
+
+	entries := control_group_entries(&game)
+	defer delete(entries)
+	if !testing.expect_value(t, len(entries), 3) {
+		return
+	}
+	testing.expect_value(t, entries[0].group, Control_Group.One)
+	testing.expect_value(t, entries[0].count, 2)
+	testing.expect_value(t, entries[1].group, Control_Group.Three)
+	testing.expect_value(t, entries[1].count, 1)
+	testing.expect_value(t, entries[2].group, Control_Group.Nine)
+	testing.expect_value(t, entries[2].count, 1)
+}
+
+@(test)
+test_control_group_chips_wrap_before_reserved_edge :: proc(t: ^testing.T) {
+	entries := []Control_Group_Entry {
+		{group = .One, count = 4},
+		{group = .Two, count = 1},
+		{group = .Nine, count = 12},
+	}
+	widths := []i32{30, 30, 30}
+	screen_height: i32 = 200
+	reserved_right: i32 = 100
+
+	chips := layout_control_group_chips(entries, widths, 1280, screen_height, reserved_right)
+	defer delete(chips)
+	if !testing.expect_value(t, len(chips), 3) {
+		return
+	}
+
+	y0 := screen_height - CONTROL_GROUP_HUD_MARGIN - CONTROL_GROUP_HUD_CHIP_HEIGHT
+	testing.expect_value(t, chips[0].x, i32(CONTROL_GROUP_HUD_MARGIN))
+	testing.expect_value(t, chips[0].y, y0)
+	testing.expect_value(t, chips[0].height, i32(CONTROL_GROUP_HUD_CHIP_HEIGHT))
+	testing.expect_value(t, chips[1].y, y0)
+	testing.expect(t, chips[1].x > chips[0].x)
+	testing.expect_value(t, chips[2].x, i32(CONTROL_GROUP_HUD_MARGIN))
+	testing.expect_value(
+		t,
+		chips[2].y,
+		y0 - CONTROL_GROUP_HUD_CHIP_HEIGHT - CONTROL_GROUP_HUD_GAP,
+	)
+
+	for chip in chips[:2] {
+		testing.expect(t, chip.x + chip.width <= reserved_right)
+	}
+}
+
 release_selection :: proc(game: ^Game, start, end: rl.Vector2, now: f64) {
 	game.selection_start = start
 	game.selecting = true

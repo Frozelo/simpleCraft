@@ -18,6 +18,18 @@ PLACEMENT_BLOCKED_TEXT :: "Cannot place shape here"
 CLUSTER_JITTER :: 4
 CLUSTER_PASSES :: 15
 CLUSTER_GAP :: 1
+CONTROL_GROUP_HUD_KEY_FONT :: 16
+CONTROL_GROUP_HUD_COUNT_FONT :: 14
+CONTROL_GROUP_HUD_MARGIN :: 10
+CONTROL_GROUP_HUD_GAP :: 8
+CONTROL_GROUP_HUD_PAD :: 5
+CONTROL_GROUP_HUD_LINE_GAP :: 2
+CONTROL_GROUP_HUD_MIN_WIDTH :: 36
+CONTROL_GROUP_HUD_CHIP_HEIGHT :: CONTROL_GROUP_HUD_PAD +
+	CONTROL_GROUP_HUD_KEY_FONT +
+	CONTROL_GROUP_HUD_LINE_GAP +
+	CONTROL_GROUP_HUD_COUNT_FONT +
+	CONTROL_GROUP_HUD_PAD
 
 Shape_Type :: enum u16 {
 	Square,
@@ -70,6 +82,32 @@ CONTROL_GROUP_NUMPAD_KEYS := [Control_Group]rl.KeyboardKey {
 	.Seven = .KP_7,
 	.Eight = .KP_8,
 	.Nine  = .KP_9,
+}
+
+CONTROL_GROUP_LABEL := [Control_Group]string {
+	.One   = "1",
+	.Two   = "2",
+	.Three = "3",
+	.Four  = "4",
+	.Five  = "5",
+	.Six   = "6",
+	.Seven = "7",
+	.Eight = "8",
+	.Nine  = "9",
+}
+
+Control_Group_Entry :: struct {
+	group: Control_Group,
+	count: int,
+}
+
+Control_Group_Chip :: struct {
+	group:  Control_Group,
+	count:  int,
+	x:      i32,
+	y:      i32,
+	width:  i32,
+	height: i32,
 }
 
 Shape_Definition :: struct {
@@ -311,7 +349,129 @@ draw :: proc(game: ^Game) {
 	)
 	rl.DrawText(fmt.ctprintf("Selected: %d", selected), 10, 10, 20, rl.GREEN)
 	rl.DrawText(fmt.ctprintf("PreSelected: %d", pre_selected), 10, 30, 20, rl.GRAY)
+	draw_control_groups(game)
 	draw_notice(game)
+}
+
+control_group_entries :: proc(game: ^Game) -> [dynamic]Control_Group_Entry {
+	entries: [dynamic]Control_Group_Entry
+	for group in Control_Group {
+		count := len(game.groups[group])
+		if count == 0 {
+			continue
+		}
+		append(&entries, Control_Group_Entry{group = group, count = count})
+	}
+	return entries
+}
+
+layout_control_group_chips :: proc(
+	entries: []Control_Group_Entry,
+	widths: []i32,
+	screen_width, screen_height, reserved_right: i32,
+) -> [dynamic]Control_Group_Chip {
+	chips: [dynamic]Control_Group_Chip
+	if len(entries) == 0 || len(widths) != len(entries) {
+		return chips
+	}
+
+	margin := i32(CONTROL_GROUP_HUD_MARGIN)
+	gap := i32(CONTROL_GROUP_HUD_GAP)
+	height := i32(CONTROL_GROUP_HUD_CHIP_HEIGHT)
+	limit := reserved_right
+	if screen_width - margin < limit {
+		limit = screen_width - margin
+	}
+
+	x := margin
+	y := screen_height - margin - height
+	for entry, i in entries {
+		width := widths[i]
+		if x > margin && x + width > limit {
+			x = margin
+			y -= height + gap
+		}
+		append(
+			&chips,
+			Control_Group_Chip {
+				group = entry.group,
+				count = entry.count,
+				x = x,
+				y = y,
+				width = width,
+				height = height,
+			},
+		)
+		x += width + gap
+	}
+	return chips
+}
+
+draw_control_groups :: proc(game: ^Game) {
+	entries := control_group_entries(game)
+	defer delete(entries)
+	if len(entries) == 0 {
+		return
+	}
+
+	widths := make([]i32, len(entries))
+	defer delete(widths)
+	keys := make([]cstring, len(entries))
+	defer delete(keys)
+	counts := make([]cstring, len(entries))
+	defer delete(counts)
+	pad := i32(CONTROL_GROUP_HUD_PAD)
+	for entry, i in entries {
+		keys[i] = fmt.ctprintf("%s", CONTROL_GROUP_LABEL[entry.group])
+		counts[i] = fmt.ctprintf("%d", entry.count)
+		key_width := rl.MeasureText(keys[i], CONTROL_GROUP_HUD_KEY_FONT)
+		count_width := rl.MeasureText(counts[i], CONTROL_GROUP_HUD_COUNT_FONT)
+		widths[i] = max(key_width, count_width) + pad * 2
+		if widths[i] < CONTROL_GROUP_HUD_MIN_WIDTH {
+			widths[i] = CONTROL_GROUP_HUD_MIN_WIDTH
+		}
+	}
+
+	screen_width := rl.GetScreenWidth()
+	screen_height := rl.GetScreenHeight()
+	notice_width := rl.MeasureText(fmt.ctprintf("%s", PLACEMENT_BLOCKED_TEXT), 20)
+	// The placement notice is centered on this edge, so the row stops short of it.
+	notice_x := (screen_width - notice_width) / 2
+	chips := layout_control_group_chips(
+		entries[:],
+		widths,
+		screen_width,
+		screen_height,
+		notice_x - CONTROL_GROUP_HUD_GAP,
+	)
+	defer delete(chips)
+
+	for chip, i in chips {
+		draw_control_group_chip(chip, keys[i], counts[i])
+	}
+}
+
+draw_control_group_chip :: proc(chip: Control_Group_Chip, key, count: cstring) {
+	rl.DrawRectangleRounded(
+		{
+			x = f32(chip.x),
+			y = f32(chip.y),
+			width = f32(chip.width),
+			height = f32(chip.height),
+		},
+		0.2,
+		6,
+		{36, 36, 42, 235},
+	)
+
+	key_width := rl.MeasureText(key, CONTROL_GROUP_HUD_KEY_FONT)
+	count_width := rl.MeasureText(count, CONTROL_GROUP_HUD_COUNT_FONT)
+	key_x := chip.x + (chip.width - key_width) / 2
+	count_x := chip.x + (chip.width - count_width) / 2
+	key_y := chip.y + CONTROL_GROUP_HUD_PAD
+	count_y := key_y + CONTROL_GROUP_HUD_KEY_FONT + CONTROL_GROUP_HUD_LINE_GAP
+	rl.DrawText(key, key_x, key_y, CONTROL_GROUP_HUD_KEY_FONT, rl.WHITE)
+	rl.DrawText(count, count_x, count_y, CONTROL_GROUP_HUD_COUNT_FONT, rl.GRAY)
 }
 
 draw_notice :: proc(game: ^Game) {

@@ -182,7 +182,7 @@ test_enemy_shapes_cannot_be_selected_moved_or_deleted :: proc(t: ^testing.T) {
 	testing.expect(t, game.shapes[0].selected)
 	testing.expect(t, !game.shapes[1].selected)
 
-	select_shapes(&game, {x = 0, y = 0, width = 100, height = 100})
+	select_shapes(&game, {x = 0, y = 0, width = 100, height = 100}, false)
 	testing.expect(t, game.shapes[0].selected)
 	testing.expect(t, !game.shapes[1].selected)
 	testing.expect(t, !game.shapes[2].selected)
@@ -411,9 +411,9 @@ test_double_click_tracks_moving_shape :: proc(t: ^testing.T) {
 	}
 	game.shapes[1] = {team = .Player, pos = {100, 100}}
 
-	select_clicked_shape(&game, game.shapes[0].pos, 1)
+	select_clicked_shape(&game, game.shapes[0].pos, 1, false)
 	advance_shapes(&game, 0.1)
-	select_clicked_shape(&game, game.shapes[0].pos, 1.1)
+	select_clicked_shape(&game, game.shapes[0].pos, 1.1, false)
 	testing.expect(t, game.shapes[1].selected, "double click should track the same moving shape")
 }
 
@@ -424,10 +424,10 @@ test_clicking_different_shape_at_same_position_is_not_double_click :: proc(t: ^t
 	game.shapes[0] = {team = .Player, pos = {20, 20}}
 	game.shapes[1] = {team = .Player, pos = {100, 100}}
 
-	select_clicked_shape(&game, {20, 20}, 1)
+	select_clicked_shape(&game, {20, 20}, 1, false)
 	game.shapes[0].pos = {60, 60}
 	game.shapes[1].pos = {20, 20}
-	select_clicked_shape(&game, {20, 20}, 1.1)
+	select_clicked_shape(&game, {20, 20}, 1.1, false)
 	testing.expect(t, !game.shapes[0].selected)
 	testing.expect(t, game.shapes[1].selected)
 	testing.expect(t, game.has_last_click)
@@ -515,6 +515,54 @@ test_set_control_group_replaces_members_with_selection :: proc(t: ^testing.T) {
 	set_control_group(&game, .One)
 	testing.expect_value(t, len(game.groups[.One]), 0)
 	testing.expect_value(t, len(game.groups[.Two]), 2)
+}
+
+@(test)
+test_shift_selection_adds_without_clearing :: proc(t: ^testing.T) {
+	game := Game {
+		shapes = make([dynamic]Shape, 4),
+	}
+	defer delete(game.shapes)
+	game.shapes[0] = {shape_type = .Square, team = .Player, pos = {20, 20}, selected = true}
+	game.shapes[1] = {shape_type = .Circle, team = .Player, pos = {80, 20}}
+	game.shapes[2] = {shape_type = .Square, team = .Player, pos = {200, 20}}
+	game.shapes[3] = {shape_type = .Circle, team = .AI, pos = {80, 20}}
+
+	select_shapes(&game, {x = 60, y = 0, width = 40, height = 40}, true)
+	testing.expect(t, game.shapes[0].selected)
+	testing.expect(t, game.shapes[1].selected)
+	testing.expect(t, !game.shapes[2].selected)
+	testing.expect(t, !game.shapes[3].selected)
+
+	select_clicked_shape(&game, {200, 20}, 1, true)
+	testing.expect(t, game.shapes[0].selected)
+	testing.expect(t, game.shapes[2].selected)
+
+	select_clicked_shape(&game, {0, 0}, 2, true)
+	testing.expect(t, game.shapes[0].selected)
+
+	select_shapes(&game, {x = 60, y = 0, width = 40, height = 40}, false)
+	testing.expect(t, !game.shapes[0].selected)
+	testing.expect(t, game.shapes[1].selected)
+	testing.expect(t, !game.shapes[2].selected)
+}
+
+@(test)
+test_shift_double_click_adds_same_type :: proc(t: ^testing.T) {
+	game := Game {
+		shapes = make([dynamic]Shape, 3),
+	}
+	defer delete(game.shapes)
+	game.shapes[0] = {shape_type = .Square, team = .Player, pos = {20, 20}}
+	game.shapes[1] = {shape_type = .Square, team = .Player, pos = {80, 20}}
+	game.shapes[2] = {shape_type = .Circle, team = .Player, pos = {140, 20}, selected = true}
+
+	select_clicked_shape(&game, {20, 20}, 1, true)
+	select_clicked_shape(&game, {20, 20}, 1.1, true)
+	testing.expect(t, game.shapes[0].selected)
+	testing.expect(t, game.shapes[1].selected)
+	testing.expect(t, game.shapes[2].selected)
+	testing.expect(t, !game.has_last_click)
 }
 
 @(test)
@@ -631,6 +679,39 @@ test_control_group_chips_wrap_before_reserved_edge :: proc(t: ^testing.T) {
 	for chip in chips[:2] {
 		testing.expect(t, chip.x + chip.width <= reserved_right)
 	}
+}
+
+@(test)
+test_dominant_shape_type_picks_the_most_common_member :: proc(t: ^testing.T) {
+	game := Game {
+		shapes = make([dynamic]Shape, 4),
+	}
+	defer delete_game(&game)
+	game.shapes[0] = {id = 1, shape_type = .Square}
+	game.shapes[1] = {id = 2, shape_type = .Circle}
+	game.shapes[2] = {id = 3, shape_type = .Square}
+	game.shapes[3] = {id = 4, shape_type = .Triangle}
+	append(&game.groups[.One], 1, 2, 3, 4)
+	append(&game.groups[.Two], 2, 4)
+
+	shape_type, ok := dominant_shape_type(&game, game.groups[.One][:])
+	testing.expect(t, ok)
+	testing.expect_value(t, shape_type, Shape_Type.Square)
+
+	shape_type, ok = dominant_shape_type(&game, game.groups[.Two][:])
+	testing.expect(t, ok)
+	testing.expect_value(t, shape_type, Shape_Type.Circle)
+
+	// Equal counts keep the earlier Shape_Type.
+	append(&game.groups[.Three], 2, 4)
+	game.shapes[1].shape_type = .Square
+	shape_type, ok = dominant_shape_type(&game, game.groups[.Three][:])
+	testing.expect(t, ok)
+	testing.expect_value(t, shape_type, Shape_Type.Square)
+
+	shape_type, ok = dominant_shape_type(&game, game.groups[.Nine][:])
+	testing.expect(t, !ok)
+	testing.expect_value(t, shape_type, Shape_Type.Square)
 }
 
 release_selection :: proc(game: ^Game, start, end: rl.Vector2, now: f64) {

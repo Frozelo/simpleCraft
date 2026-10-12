@@ -25,7 +25,10 @@ CONTROL_GROUP_HUD_GAP :: 8
 CONTROL_GROUP_HUD_PAD :: 5
 CONTROL_GROUP_HUD_LINE_GAP :: 2
 CONTROL_GROUP_HUD_MIN_WIDTH :: 36
-CONTROL_GROUP_HUD_CHIP_HEIGHT :: CONTROL_GROUP_HUD_PAD +
+CONTROL_GROUP_HUD_ICON :: 14
+CONTROL_GROUP_HUD_KEY_MARK :: 10
+CONTROL_GROUP_HUD_CHIP_HEIGHT ::
+	CONTROL_GROUP_HUD_PAD +
 	CONTROL_GROUP_HUD_KEY_FONT +
 	CONTROL_GROUP_HUD_LINE_GAP +
 	CONTROL_GROUP_HUD_COUNT_FONT +
@@ -244,21 +247,24 @@ update :: proc(game: ^Game, dt: f32) {
 finish_selection :: proc(game: ^Game, end: rl.Vector2, now: f64) {
 	dx := end.x - game.selection_start.x
 	dy := end.y - game.selection_start.y
+	add_mode := rl.IsKeyDown(.LEFT_SHIFT) || rl.IsKeyDown(.RIGHT_SHIFT)
 	// Compare squared distances so the threshold does not require a square root.
 	if dx * dx + dy * dy > SELECTION_DRAG_THRESHOLD * SELECTION_DRAG_THRESHOLD {
-		select_shapes(game, selection_rect(game.selection_start, end))
+		select_shapes(game, selection_rect(game.selection_start, end), add_mode)
 		game.has_last_click = false
 	} else {
-		select_clicked_shape(game, end, now)
+		select_clicked_shape(game, end, now, add_mode)
 	}
 	game.selecting = false
 }
 
-select_clicked_shape :: proc(game: ^Game, position: rl.Vector2, now: f64) {
+select_clicked_shape :: proc(game: ^Game, position: rl.Vector2, now: f64, add_mode: bool) {
 	index := shape_at(game, position)
 	if index < 0 {
-		clear_selection(game)
-		game.has_last_click = false
+		if !add_mode {
+			clear_selection(game)
+			game.has_last_click = false
+		}
 		return
 	}
 
@@ -269,12 +275,21 @@ select_clicked_shape :: proc(game: ^Game, position: rl.Vector2, now: f64) {
 		now >= game.last_click_at &&
 		now - game.last_click_at <= DOUBLE_CLICK_INTERVAL
 	if is_double_click {
-		select_all_shapes_of_type(game, shape.shape_type)
+		if add_mode {
+			add_shapes_of_type(game, shape.shape_type)
+		} else {
+			select_all_shapes_of_type(game, shape.shape_type)
+		}
 		game.has_last_click = false
 		return
 	}
 
-	select_shape(game, index)
+	if add_mode {
+		game.shapes[index].selected = true
+	} else {
+		select_shape(game, index)
+	}
+
 	game.last_click_at = now
 	game.last_click_shape_index = index
 	game.has_last_click = true
@@ -353,6 +368,28 @@ draw :: proc(game: ^Game) {
 	draw_notice(game)
 }
 
+dominant_shape_type :: proc(game: ^Game, ids: []u32) -> (shape_type: Shape_Type, ok: bool) {
+	counts: [Shape_Type]int
+	for shape in game.shapes {
+		if !id_list_contains(ids, shape.id) {
+			continue
+		}
+		counts[shape.shape_type] += 1
+	}
+
+	best: Shape_Type
+	best_count := 0
+
+	for shape_type in Shape_Type {
+		if counts[shape_type] > best_count {
+			best = shape_type
+			best_count = counts[shape_type]
+		}
+	}
+
+	return best, best_count > 0
+}
+
 control_group_entries :: proc(game: ^Game) -> [dynamic]Control_Group_Entry {
 	entries: [dynamic]Control_Group_Entry
 	for group in Control_Group {
@@ -424,9 +461,10 @@ draw_control_groups :: proc(game: ^Game) {
 	for entry, i in entries {
 		keys[i] = fmt.ctprintf("%s", CONTROL_GROUP_LABEL[entry.group])
 		counts[i] = fmt.ctprintf("%d", entry.count)
-		key_width := rl.MeasureText(keys[i], CONTROL_GROUP_HUD_KEY_FONT)
+		mark_width := rl.MeasureText(keys[i], CONTROL_GROUP_HUD_KEY_MARK)
 		count_width := rl.MeasureText(counts[i], CONTROL_GROUP_HUD_COUNT_FONT)
-		widths[i] = max(key_width, count_width) + pad * 2
+		content := mark_width + 4 + CONTROL_GROUP_HUD_ICON
+		widths[i] = max(content, count_width) + pad * 2
 		if widths[i] < CONTROL_GROUP_HUD_MIN_WIDTH {
 			widths[i] = CONTROL_GROUP_HUD_MIN_WIDTH
 		}
@@ -447,31 +485,52 @@ draw_control_groups :: proc(game: ^Game) {
 	defer delete(chips)
 
 	for chip, i in chips {
-		draw_control_group_chip(chip, keys[i], counts[i])
+		shape_type, has_shape := dominant_shape_type(game, game.groups[chip.group][:])
+		draw_control_group_chip(chip, keys[i], counts[i], shape_type, has_shape)
 	}
 }
 
-draw_control_group_chip :: proc(chip: Control_Group_Chip, key, count: cstring) {
+draw_control_group_chip :: proc(
+	chip: Control_Group_Chip,
+	key, count: cstring,
+	shape_type: Shape_Type,
+	has_shape: bool,
+) {
 	rl.DrawRectangleRounded(
-		{
-			x = f32(chip.x),
-			y = f32(chip.y),
-			width = f32(chip.width),
-			height = f32(chip.height),
-		},
+		{x = f32(chip.x), y = f32(chip.y), width = f32(chip.width), height = f32(chip.height)},
 		0.2,
 		6,
 		{36, 36, 42, 235},
 	)
 
-	key_width := rl.MeasureText(key, CONTROL_GROUP_HUD_KEY_FONT)
-	count_width := rl.MeasureText(count, CONTROL_GROUP_HUD_COUNT_FONT)
-	key_x := chip.x + (chip.width - key_width) / 2
-	count_x := chip.x + (chip.width - count_width) / 2
 	key_y := chip.y + CONTROL_GROUP_HUD_PAD
+	rl.DrawText(key, chip.x + CONTROL_GROUP_HUD_PAD, key_y, CONTROL_GROUP_HUD_KEY_MARK, rl.GRAY)
+
+	if has_shape {
+		mark_width := rl.MeasureText(key, CONTROL_GROUP_HUD_KEY_MARK)
+		center := rl.Vector2 {
+			f32(chip.x + CONTROL_GROUP_HUD_PAD + mark_width + 4) + f32(CONTROL_GROUP_HUD_ICON) / 2,
+			f32(key_y) + f32(CONTROL_GROUP_HUD_KEY_FONT) / 2,
+		}
+		draw_shape_icon(center, shape_type, f32(CONTROL_GROUP_HUD_ICON), TEAM_COLOR[.Player])
+	}
+
+	count_width := rl.MeasureText(count, CONTROL_GROUP_HUD_COUNT_FONT)
+	count_x := chip.x + (chip.width - count_width) / 2
 	count_y := key_y + CONTROL_GROUP_HUD_KEY_FONT + CONTROL_GROUP_HUD_LINE_GAP
-	rl.DrawText(key, key_x, key_y, CONTROL_GROUP_HUD_KEY_FONT, rl.WHITE)
 	rl.DrawText(count, count_x, count_y, CONTROL_GROUP_HUD_COUNT_FONT, rl.GRAY)
+}
+
+draw_shape_icon :: proc(center: rl.Vector2, shape_type: Shape_Type, size: f32, color: rl.Color) {
+	switch SHAPE_DEFINITIONS[shape_type].geometry {
+	case .Square:
+		rl.DrawRectangleRec(square_rect(center, size), color)
+	case .Circle:
+		rl.DrawCircleV(center, size / 2, color)
+	case .Triangle:
+		v1, v2, v3 := triangle_vertices(center, size)
+		rl.DrawTriangle(v1, v2, v3, color)
+	}
 }
 
 draw_notice :: proc(game: ^Game) {
@@ -580,7 +639,10 @@ update_control_groups :: proc(game: ^Game) {
 }
 
 control_group_pressed :: proc(group: Control_Group) -> bool {
-	return rl.IsKeyPressed(CONTROL_GROUP_KEYS[group]) || rl.IsKeyPressed(CONTROL_GROUP_NUMPAD_KEYS[group])
+	return(
+		rl.IsKeyPressed(CONTROL_GROUP_KEYS[group]) ||
+		rl.IsKeyPressed(CONTROL_GROUP_NUMPAD_KEYS[group]) \
+	)
 }
 
 set_control_group :: proc(game: ^Game, group: Control_Group) {
@@ -653,11 +715,19 @@ id_list_contains :: proc(ids: []u32, id: u32) -> bool {
 	return false
 }
 
-select_shapes :: proc(game: ^Game, rect: rl.Rectangle) {
+select_shapes :: proc(game: ^Game, rect: rl.Rectangle, additive: bool) {
 	for &shape in game.shapes {
-		shape.selected = shape.team == .Player && shape_intersects_rect(shape, rect)
+		hit := shape.team == .Player && shape_intersects_rect(shape, rect)
+		if additive {
+			if hit {
+				shape.selected = true
+			}
+		} else {
+			shape.selected = hit
+		}
 	}
 }
+
 
 shape_at :: proc(game: ^Game, position: rl.Vector2) -> int {
 	for i := len(game.shapes) - 1; i >= 0; i -= 1 {
@@ -679,6 +749,14 @@ select_shape :: proc(game: ^Game, index: int) {
 select_all_shapes_of_type :: proc(game: ^Game, shape_type: Shape_Type) {
 	for &shape in game.shapes {
 		shape.selected = shape.team == .Player && shape.shape_type == shape_type
+	}
+}
+
+add_shapes_of_type :: proc(game: ^Game, shape_type: Shape_Type) {
+	for &shape in game.shapes {
+		if shape.team == .Player && shape.shape_type == shape_type {
+			shape.selected = true
+		}
 	}
 }
 
@@ -708,10 +786,7 @@ move_selected_shapes :: proc(game: ^Game, click: rl.Vector2) {
 	for i in 0 ..< len(indices) {
 		angle := rand.float32() * math.TAU
 		length := rand.float32() * CLUSTER_JITTER
-		targets[i] = {
-			click.x + math.cos(angle) * length,
-			click.y + math.sin(angle) * length,
-		}
+		targets[i] = {click.x + math.cos(angle) * length, click.y + math.sin(angle) * length}
 	}
 
 	for _ in 0 ..< CLUSTER_PASSES {
@@ -728,10 +803,7 @@ move_selected_shapes :: proc(game: ^Game, click: rl.Vector2) {
 
 	for index, i in indices {
 		shape := &game.shapes[index]
-		shape.target = {
-			targets[i].x + (click.x - center.x),
-			targets[i].y + (click.y - center.y),
-		}
+		shape.target = {targets[i].x + (click.x - center.x), targets[i].y + (click.y - center.y)}
 		shape.is_moving = shape.pos != shape.target
 	}
 }
